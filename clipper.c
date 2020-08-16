@@ -79,7 +79,15 @@ int line_orientation(const Point* p, const Point* q, const Point* r)
   
     if (val == 0) return 0;  // colinear 
     return (val > 0)? 1: 2; // clock or counterclock wise 
-} 
+}
+
+int line_orientation_v2(const Point* p, const Point* q, const Point* r) 
+{
+    int val = (q->y - p->y) * (r->x - q->x) - 
+              (q->x - p->x) * (r->y - q->y); 
+  
+    return (val <= 0)? 1: 2; // clock or counterclock wise 
+}
 
 // The function that returns true if line segment 'p1q1' 
 // and 'p2q2' intersect. 
@@ -216,8 +224,8 @@ static Line_Ptr poly_getEdgePtr(Polygon *polygon, int idx)
 static inline void poly_empty(Polygon *polygon)
 {
     polygon->size = 0;
-    polygon->type = 0;
 }
+
 
 static inline void poly_copy(const Polygon *src, Polygon *dst)
 {
@@ -229,8 +237,7 @@ static inline void poly_copy(const Polygon *src, Polygon *dst)
 static inline void poly_addPoint(Polygon* polygon, const Point *pt)
 {
     assert(polygon->size < MAX_POINTS);
-    polygon->pts[polygon->size-1] = *pt;
-    polygon->size++;
+    polygon->pts[polygon->size++] = *pt;
 }
 
 static int poly_checkType(Polygon* polygon)
@@ -286,15 +293,31 @@ static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *cli
             Point *prev_point = &input_polygon.pts[(i + input_polygon.size - 1) % input_polygon.size];            
             Point intersection_point = line_computeIntersection(prev_point, current_point, clipEdge.pts);
 
-            if (line_orientation(&clipEdge.pts[0], &clipEdge.pts[1], current_point) == LINE_LEFT) { //https://www.geeksforgeeks.org/how-to-check-if-a-given-point-lies-inside-a-polygon/
-                if (line_orientation(&clipEdge.pts[0], &clipEdge.pts[1], current_point) == LINE_RIGHT) {
+            int current_orient = line_orientation_v2(&clipEdge.pts[0], &clipEdge.pts[1], current_point);
+            int prev_orient = line_orientation_v2(&clipEdge.pts[0], &clipEdge.pts[1], prev_point);
+            clip_log("[subj:%d][prev](%.1f, %.1f)[%d] "
+                "[cur](%.1f, %.1f)[%d] "
+                "vs edge[%d](%.1f, %1.f)(%.1f, %.1f)\n",
+                i,prev_point->x, prev_point->y, prev_orient,
+                current_point->x, current_point->y, current_orient,
+                e, clipEdge.pts[0].x, clipEdge.pts[0].y,
+                clipEdge.pts[1].x, clipEdge.pts[1].y);
+            if (current_orient == LINE_LEFT) { //https://www.geeksforgeeks.org/how-to-check-if-a-given-point-lies-inside-a-polygon/
+                if (prev_orient == LINE_RIGHT) {
                     poly_addPoint(output_polygon, &intersection_point);
                 }
                 poly_addPoint(output_polygon, current_point);
-            } else if (line_orientation(&clipEdge.pts[0], &clipEdge.pts[1], prev_point) == LINE_LEFT) {
+            } else if (prev_orient == LINE_LEFT) {
                 poly_addPoint(output_polygon, &intersection_point);
             }
         }
+
+        for (int i = 0; i < output_polygon->size; ++i) {
+            printf("[(%d)%.1f,%1.f],", i, 
+                output_polygon->pts[i].x,
+                output_polygon->pts[i].y);
+        }
+        printf("\n");
     }
     return result;
 }
@@ -474,8 +497,8 @@ int main(int argc, char **argv)
             poly_type_str[clipper.type]);
         Polygon *poly = result.polygon;
         for (int i = 0; i < result.polygon[0].size; ++i) {
-            clip_log("(%d: %.2f %.2f)\n", i, poly->pts[0].x,
-                poly->pts[0].y);
+            clip_log("(%d: %.2f %.2f)\n", i, poly->pts[i].x,
+                poly->pts[i].y);
         }
     }
     return 0;
