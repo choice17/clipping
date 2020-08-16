@@ -2,21 +2,27 @@ CC=gcc
 CXX=g++
 
 CXXFLAGS=-Wall -std=c++11 -fPIC
+CFLAGS=-Wall -std=gnu99 -fPIC
 LIBS=-lstdc++
 
 INCS=-I.
-SRCS=$(wildcard ./*.cc)
-OBJS=$(SRCS:.cc=.o)
+# CXXSRCS=$(wildcard ./*.cc)
+SRCS=$(wildcard ./*.c)
+OBJS=$(SRCS:.c=.o)
+# CXXOBJS=$(SRCS:.cc=.o)
 
 BIN=app
 
 all: $(BIN)
 
 $(BIN): $(OBJS)
-	$(CXX) $< -o $@ $(CXXFLAGS)
+	$(CC) $< -o $@ $(CFLAGS)
 
 %.o: %.cc
 	$(CXX) -c $^ -o $@ $(CXXFLAGS)
+
+%.o: %.c
+	$(CC) -c $^ -o $@ $(INCS) $(CFLAGS)
 
 clean:
 	rm $(BIN) $(OBJS)
