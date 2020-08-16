@@ -308,8 +308,8 @@ int CLIP_drawLine(const Point line[2], Array2di* arr, int thickness)
     int ex = clamp((int)line[1].x, 0, w-1);
     int ey = clamp((int)line[1].y, 0, h-1);
 
-    const int dy = (ey - sy + 1);
-    const int dx = (ex - sx + 1);
+    const int dy = (ey - sy);
+    const int dx = (ex - sx);
 
     int slope_fixed = 0;
     if (dy == 0)      { slope_fixed = 0; }
@@ -336,26 +336,30 @@ int CLIP_drawLine(const Point line[2], Array2di* arr, int thickness)
     //printf("sign %d %d th(%d)\n", signx, signy,  thickhalf);
     if (slope_fixed_abs >= FIXED_POINT_ONE) {
         dx_fixed *= (FIXED_POINT_ONE << FIXED_POINT_SHIFT) / slope_fixed_abs;
-        while (sy != ey) {
-            x_fixed += dx_fixed;
+        while (1) {
             x = ROUND_DOWN(x_fixed);
             int start = clamp(x - thickhalf, 0, w);
             int end = clamp(x - thickhalf + thickness, 0, w);
             for (int i = start; i < end; ++i) {
                 arr->data[sy*w + i] = 1;
             }
+            if (sy == ey)
+                break;
+            x_fixed += dx_fixed;
             sy+=signy;
         }
     } else {
         dy_fixed *= ROUND_DOWN(FIXED_POINT_ONE * slope_fixed_abs);
-        while (sx != ex) {
-            y_fixed += dy_fixed;
+        while (1) {
             y = ROUND_DOWN(y_fixed);
             int start = clamp(y - thickhalf, 0, h);
             int end = clamp(y - thickhalf + thickness, 0, h);
             for (int i = start; i < end; ++i) {
                 arr->data[i*w + sx] = 1;
             }
+            if (sx == ex)
+                break;
+            y_fixed += dy_fixed;
             sx+=signx;
         }
     }
@@ -366,7 +370,12 @@ void CLIP_printArr(const Array2di* arr)
 {
     const int h = arr->h;
     const int w = arr->w;
+    printf(" ");
+    for (int j = 0; j < w; ++j)
+        printf("%d", j % 10);
+    printf("\n");
     for (int i = 0; i < h; ++i) {
+        printf("%d", i % 10);
         for (int j = 0; j < w; ++j) {
             if (arr->data[i*w + j] != 0)
                 printf("X");
@@ -381,7 +390,7 @@ int main(int argc, char **argv)
 {
     // draw line app
     if (strcmp(argv[1], "-l")==0) {
-        Array2di arr = arr_init2di(50,50);
+        Array2di arr = arr_init2di(50,35);
         Point pts[2];
         pts[0].x = atof(argv[2]);
         pts[0].y = atof(argv[3]);
@@ -412,6 +421,8 @@ int main(int argc, char **argv)
         }
         CLIP_printArr(&arr);
         arr_free(arr);
+    } else if (strcmp(argv[1], "-c")==0) {
+
     }
     return 0;
 }

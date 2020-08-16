@@ -1,8 +1,8 @@
 CC=gcc
 CXX=g++
 
-CXXFLAGS=-Wall -std=c++11 -fPIC
-CFLAGS=-Wall -std=gnu99 -fPIC
+CXXFLAGS=-Wall -std=c++11 -fPIC -g
+CFLAGS=-Wall -std=gnu99 -fPIC -g 
 LIBS=-lstdc++
 
 INCS=-I.
@@ -12,6 +12,7 @@ OBJS=$(SRCS:.c=.o)
 # CXXOBJS=$(SRCS:.cc=.o)
 
 BIN=app
+
 
 all: $(BIN)
 
