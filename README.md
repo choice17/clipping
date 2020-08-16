@@ -7,7 +7,8 @@ Sample library to calculate polygon / line
 * [x] Line drawing algorithm Bresenham's line algorithm - Wikipedia  
 * [x] Polygon Area calculation  
 * [x] Polygon type checking
-* [ ] Polygon-to-polygon clipping  
+* [x] Polygon-to-polygon clipping (convex)
+* [x] Polygon-to-polygon clipping (concave)
 * [ ] Polygon Filling drawing  
 * [ ] Rectangle-cross-line crossing 
 * [ ] Multi-rectangle union area
