@@ -262,9 +262,7 @@ float CLIP_getArea(const Polygon *polygon)
     for (int i = 0; i<number_vertex; ++i) {
         next = (i + 1) % number_vertex;
         area += (pts[i].x * (pts[next].y)) - ((pts[i].y) * pts[next].x);
-        printf("%d, area:%.5f\n", i, area);
     }
-    printf("\n");
     return abs((float)area/2.f);
 }
 
@@ -295,13 +293,14 @@ static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *cli
 
             int current_orient = line_orientation_v2(&clipEdge.pts[0], &clipEdge.pts[1], current_point);
             int prev_orient = line_orientation_v2(&clipEdge.pts[0], &clipEdge.pts[1], prev_point);
-            clip_log("[subj:%d][prev](%.1f, %.1f)[%d] "
+            /*clip_log("[subj:%d][prev](%.1f, %.1f)[%d] "
                 "[cur](%.1f, %.1f)[%d] "
                 "vs edge[%d](%.1f, %1.f)(%.1f, %.1f)\n",
                 i,prev_point->x, prev_point->y, prev_orient,
                 current_point->x, current_point->y, current_orient,
                 e, clipEdge.pts[0].x, clipEdge.pts[0].y,
                 clipEdge.pts[1].x, clipEdge.pts[1].y);
+            */
             if (current_orient == LINE_LEFT) { //https://www.geeksforgeeks.org/how-to-check-if-a-given-point-lies-inside-a-polygon/
                 if (prev_orient == LINE_RIGHT) {
                     poly_addPoint(output_polygon, &intersection_point);
@@ -312,12 +311,14 @@ static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *cli
             }
         }
 
+        #if 0
         for (int i = 0; i < output_polygon->size; ++i) {
             printf("[(%d)%.1f,%1.f],", i, 
                 output_polygon->pts[i].x,
                 output_polygon->pts[i].y);
         }
         printf("\n");
+        #endif
     }
     return result;
 }
@@ -491,6 +492,7 @@ int main(int argc, char **argv)
         CLIP_drawPoly(&clipper, &arr);
         CLIP_printArr(&arr);
         arr_free(arr);
+
         Clipper_result result = CLIP_clipPolygon(&subj, &clipper);
         clip_log("subj: %s vs clipper: %s\n",
             poly_type_str[subj.type],
@@ -500,6 +502,12 @@ int main(int argc, char **argv)
             clip_log("(%d: %.2f %.2f)\n", i, poly->pts[i].x,
                 poly->pts[i].y);
         }
+        clip_log("output area is %.2f\n",CLIP_getArea(poly));
+        arr = arr_init2di(30,25);
+        CLIP_drawPoly(poly, &arr);
+        CLIP_printArr(&arr);
+        arr_free(arr);
+
     }
     return 0;
 }
