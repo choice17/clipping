@@ -27,6 +27,10 @@ const char *poly_type_str[] = {
     "Concave"
 };
 
+typedef struct {
+    Point *pts[2];
+} Line_Ptr;
+
 float max(float a, float b)
 {
     return ( a > b ) ? a : b;
@@ -197,6 +201,18 @@ static Line poly_getEdge(const Polygon *polygon, int idx)
     return edge;
 }
 
+static Line_Ptr poly_getEdgePtr(Polygon *polygon, int idx)
+{
+    assert(idx < polygon->size);
+    Line_Ptr edge = { 
+                .pts = {
+                &polygon->pts[(idx + polygon->size - 1) % polygon->size],
+                &polygon->pts[idx]
+                }
+            };
+    return edge;
+}
+
 static inline void poly_empty(Polygon *polygon)
 {
     polygon->size = 0;
@@ -262,7 +278,7 @@ static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *cli
     for (int e = 0; e < clipper->size; ++e) {
         Line clipEdge = poly_getEdge(clipper, e);
         Polygon input_polygon;
-        poly_copy(&input_polygon, output_polygon);
+        poly_copy(output_polygon, &input_polygon);
         poly_empty(output_polygon);
 
         for (int i = 0; i < input_polygon.size; ++i) {
@@ -386,6 +402,15 @@ void CLIP_printArr(const Array2di* arr)
     }
 }
 
+
+int CLIP_drawPoly(const Polygon *polygon, Array2di *arr)
+{
+    for (int i = 0; i < polygon->size; ++i) {
+        Line line = poly_getEdge(polygon, i);
+        CLIP_drawLine(line.pts, arr, 1);
+    }
+    return 0;
+}
 int main(int argc, char **argv)
 {
     // draw line app
@@ -422,7 +447,36 @@ int main(int argc, char **argv)
         CLIP_printArr(&arr);
         arr_free(arr);
     } else if (strcmp(argv[1], "-c")==0) {
-
+        Polygon subj = {.size=4,
+            .pts = {
+                {5, 0},
+                {10, 0},
+                {10, 20},
+                {5, 10}
+            }};
+        Polygon clipper = {.size=4,
+            .pts = {
+                {0, 5},
+                {20, 5},
+                {20, 15},
+                {0, 15}
+            }};
+        subj.type = poly_checkType(&subj);
+        clipper.type = poly_checkType(&clipper);
+        Array2di arr = arr_init2di(30,25);
+        CLIP_drawPoly(&subj, &arr);
+        CLIP_drawPoly(&clipper, &arr);
+        CLIP_printArr(&arr);
+        arr_free(arr);
+        Clipper_result result = CLIP_clipPolygon(&subj, &clipper);
+        clip_log("subj: %s vs clipper: %s\n",
+            poly_type_str[subj.type],
+            poly_type_str[clipper.type]);
+        Polygon *poly = result.polygon;
+        for (int i = 0; i < result.polygon[0].size; ++i) {
+            clip_log("(%d: %.2f %.2f)\n", i, poly->pts[0].x,
+                poly->pts[0].y);
+        }
     }
     return 0;
 }
