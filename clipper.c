@@ -27,9 +27,31 @@ const char *poly_type_str[] = {
     "Concave"
 };
 
-typedef struct {
+typedef union {
     Point *pts[2];
+    struct {
+        Point *prev;
+        Point *curr;
+    };
 } Line_Ptr;
+
+typedef enum { VERT_UNDERTERMINED=-1, VERT_NORM=0, VERT_IN, VERT_OUT, VERT_SAME } Vert_Type;
+
+typedef struct {
+    int type;
+    Point pt;
+} Vert;
+
+typedef struct {
+    Vert vertex[MAX_POINTS];
+    int size;
+} Vert_List;
+
+typedef struct {
+    int type[MAX_POINTS];
+    Point *pts[MAX_POINTS];
+    int size;
+} Vert_Ptr_List;
 
 float max(float a, float b)
 {
@@ -55,6 +77,7 @@ static int line_onSegment(const Point* p, const Point* q, const Point* r)
 } 
 
 typedef enum {
+    LINE_SAME = 0;
     LINE_LEFT = 1,
     LINE_RIGHT = 2,
 } LINE_DIRECTION;
@@ -81,12 +104,24 @@ int line_orientation(const Point* p, const Point* q, const Point* r)
     return (val > 0)? 1: 2; // clock or counterclock wise 
 }
 
+// p - start point 
+// q - end point
+// r - query point 
+// output 0 : on the line , 1 : 
 int line_orientation_v2(const Point* p, const Point* q, const Point* r) 
 {
     int val = (q->y - p->y) * (r->x - q->x) - 
               (q->x - p->x) * (r->y - q->y); 
   
-    return (val <= 0)? 1: 2; // clock or counterclock wise 
+    return (val <= 0)? LINE_LEFT: LINE_RIGHT; // clock or counterclock wise 
+}
+
+int line_orientation_v2(const Point* p, const Point* q, const Point* r) 
+{
+    int val = (q->y - p->y) * (r->x - q->x) - 
+              (q->x - p->x) * (r->y - q->y); 
+  
+    return (val < 0)? LINE_LEFT: ((val == 0) ? LINE_SAME : LINE_RIGHT); // clock or counterclock wise 
 }
 
 // The function that returns true if line segment 'p1q1' 
@@ -147,7 +182,7 @@ int line_doIntersect(const Point *p1, const Point *q1, const Point *p2, const Po
   
             count++; 
         } 
-        i = next; 
+        i = next;
     } while (i != 0); 
   
     // Return true if count is odd, false otherwise 
@@ -180,6 +215,85 @@ static Point line_computeIntersection(const Point* pt1, const Point* pt2, const 
     denom;
 
     return intersecting_point;
+}
+
+static Point line_computeIntersection_v2(const Point* pt1, const Point* pt2, const Line_Ptr *edge)
+{
+    Point intersecting_point = { };
+    const Point *pt3 = edge->pts[0];
+    const Point *pt4 = edge->pts[1];
+
+    float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
+    float x3_x4 = pt3->x - pt4->x;
+    float x1_x2 = pt1->x - pt2->x;
+    float x3y4_y3x4 = pt3->x * pt4->y - pt3->y * pt4->x;
+    float y3_y4 = pt3->y - pt4->y;
+    float y1_y2 = pt1->y - pt2->y;
+
+    float denom = x1_x2 * y3_y4 - y1_y2 * x3_x4;
+
+    if (denom == 0.0f ) return intersecting_point;
+
+    intersecting_point.x =
+    (x1y2_y1x2 * x3_x4 - x1_x2 * x3y4_y3x4) /
+    denom;
+    intersecting_point.y =
+    (x1y2_y1x2 * y3_y4 - y1_y2 * x3y4_y3x4) /
+    denom;
+
+    return intersecting_point;
+}
+
+
+static Vert line_computeIntersection_v3(const Line_Ptr *edge, const Line_Ptr *query_edge)
+{
+    Vert intersection_point = {-1, {-1, -1} };
+    const Point *pt1 = edge->pts[0];
+    const Point *pt2 = edge->pts[1];
+    const Point *pt3 = query_edge->pts[0];
+    const Point *pt4 = query_edge->pts[1];
+
+    // filter out of box
+    if (pt4->x < pt1->x || pt4->y < pt1->y ||
+        pt3->x > pt2->x || pt3->y > pt2->y)
+        return intersection_point;
+
+    int pt3_orig = line_orientation_v3(pt1, pt2, pt3);
+    int pt4_orig = line_orientation_v3(pt1, pt2, pt4);
+
+
+    if (pt4_orig == LINE_SAME) {
+        intersection_point.type = VERT_SAME;
+        intersection_point.pt = *pt4;
+        return intersection_point;
+    }
+
+    // filter no intersection
+    if (pt3_orig == pt4_orig)
+        return intersection_point;
+    else
+        intersection_point.type = (pt4_orig == LINE_LEFT) ?
+                VERT_IN : VERT_OUT;
+
+    float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
+    float x3_x4 = pt3->x - pt4->x;
+    float x1_x2 = pt1->x - pt2->x;
+    float x3y4_y3x4 = pt3->x * pt4->y - pt3->y * pt4->x;
+    float y3_y4 = pt3->y - pt4->y;
+    float y1_y2 = pt1->y - pt2->y;
+
+    float denom = x1_x2 * y3_y4 - y1_y2 * x3_x4;
+
+    if (denom == 0.0f ) return intersection_point;
+
+    intersection_point.x =
+    (x1y2_y1x2 * x3_x4 - x1_x2 * x3y4_y3x4) /
+    denom;
+    intersecting_point.y =
+    (x1y2_y1x2 * y3_y4 - y1_y2 * x3y4_y3x4) /
+    denom;
+
+    return intersection_point;
 }
 
 static Array2di arr_init2di(int w, int h)
@@ -266,9 +380,58 @@ float CLIP_getArea(const Polygon *polygon)
     return abs((float)area/2.f);
 }
 
+static void vert_addVert(Vert_list *list, const Vert *vertex)
+{
+    assert(list->size < MAX_POINTS);
+    list->vertex[list->size++] = *vertex;
+}
+
+static void vert_addPointPtr(Vert_Ptr_List *list, Point *pt, int type)
+{
+    assert(list->size < MAX_POINTS);
+    list->pts[list->size] = pt;
+    list->type[list->size++] = type;
+}
+
+
+static void vert_addVertPtr(Vert_Ptr_List *list, Vert *vert)
+{
+    assert(list->size < MAX_POINTS);
+    list->pts[list->size] = &vert->pt;
+    list->type[list->size++] = vert->type;
+}
+
+static Vert *vert_getLastPtr(Vert_List *list)
+{
+    return &list->vert[list->size-1];
+}
+
 static Clipper_result clip_concavePolygon(const Polygon *subj, const Polygon *clipper)
 {
     Clipper_result result = { };
+    Vert_Ptr_List subj_list, clipper_list;
+    Vert_List intersection_point_list = { };
+    // get all intersection and orientation for subj polygon
+    for (int c = 0; c < clipper->size; ++e) {
+        Line_Ptr clipEdge = poly_getEdgePtr(clipper, c);
+        for (int s = 0; s < subj->size; ++s) {
+            Line_Ptr subjEdge = poly_getEdgePtr(subj, s);
+            Vert intersection_point = line_computeIntersection_v3(&subjEdge, &clipEdge);
+            if (intersection_point.type != UNDETERMINED) {
+                vert_addVert(&intersection_point_list, &intersection_point);
+                vert_addVertPtr(&subj_list, 
+                    vert_getLastPtr(&intersection_point_list));
+            }
+            vert_addPointPtr(&subj_list, subjEdge.curr, VERT_NORM);
+        }
+    }
+
+    // assign intersection point to clipper polygon 
+    
+        Polygon input_polygon;
+        poly_copy(output_polygon, &input_polygon);
+        poly_empty(output_polygon);
+
     return result;
 }
 
@@ -281,7 +444,7 @@ static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *cli
 
     poly_copy(subj, output_polygon);
     for (int e = 0; e < clipper->size; ++e) {
-        Line clipEdge = poly_getEdge(clipper, e);
+        Line_Ptr clipEdge = poly_getEdgePtr(clipper, e);
         Polygon input_polygon;
         poly_copy(output_polygon, &input_polygon);
         poly_empty(output_polygon);
@@ -289,10 +452,10 @@ static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *cli
         for (int i = 0; i < input_polygon.size; ++i) {
             Point *current_point = &input_polygon.pts[i];
             Point *prev_point = &input_polygon.pts[(i + input_polygon.size - 1) % input_polygon.size];            
-            Point intersection_point = line_computeIntersection(prev_point, current_point, clipEdge.pts);
+            Point intersection_point = line_computeIntersection_v2(prev_point, current_point, &clipEdge);
 
-            int current_orient = line_orientation_v2(&clipEdge.pts[0], &clipEdge.pts[1], current_point);
-            int prev_orient = line_orientation_v2(&clipEdge.pts[0], &clipEdge.pts[1], prev_point);
+            int current_orient = line_orientation_v2(clipEdge.pts[0], clipEdge.pts[1], current_point);
+            int prev_orient = line_orientation_v2(clipEdge.pts[0], clipEdge.pts[1], prev_point);
             /*clip_log("[subj:%d][prev](%.1f, %.1f)[%d] "
                 "[cur](%.1f, %.1f)[%d] "
                 "vs edge[%d](%.1f, %1.f)(%.1f, %.1f)\n",
