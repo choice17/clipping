@@ -21,6 +21,10 @@
 
 #define ROUND_DOWN(x) ((x + FIXED_POINT_HALF) >> FIXED_POINT_SHIFT)
 
+#define poly_free(x) (free(x))
+#define PUSH_BACK_THRES (8)
+#define PUSH_BACK_MASK (7)
+
 const char *poly_type_str[] = {
     "Undetermined",
     "Convex",
@@ -35,23 +39,50 @@ typedef union {
     };
 } Line_Ptr;
 
-typedef enum { VERT_UNDERTERMINED=-1, VERT_NORM=0, VERT_IN, VERT_OUT, VERT_SAME } Vert_Type;
+typedef struct Edge_Ptr {
+    Point *prev;
+    Point *curr;
+    Intersection **intersection_point;
+    Edge_Ptr *next;
+    int size;
+} Edge_Ptr;
+
+typedef struct {
+    Edge_Ptr edges[MAX_POINTS];
+    int size; 
+} Edge_Ptr_List;
 
 typedef struct {
     int type;
+    Edge *edges[2];
     Point pt;
-} Vert;
+} Intersection;
 
 typedef struct {
-    Vert vertex[MAX_POINTS];
+    Intersection pts[MAX_POINTS];
     int size;
-} Vert_List;
+} Intersection_Point_List;
 
-typedef struct {
-    int type[MAX_POINTS];
-    Point *pts[MAX_POINTS];
-    int size;
-} Vert_Ptr_List;
+typedef enum { VERT_UNDERTERMINED=-1, VERT_NORM=0, VERT_IN, VERT_OUT, VERT_SAME, VERT_CHECKED, VERT_COMPLETE } Vert_Type;
+
+
+void edge_freeList(Edge_Ptr_List *list)
+{
+    for (int i = 0; i < list->size; ++i) {
+        Edge_Ptr *edge = &list->edges[i];
+        if (edge->size)
+            free(edge->intersection_point);
+    }
+}
+
+void edge_pushBackIntersection(Edge_Ptr *edge, Intersection *pt)
+{
+    if (edge->size == 0)
+        edge->intersection_point = (**Intersection)calloc(sizeof(*Intersection_point)*PUSH_BACK_THRES);
+    else if ((edge->size & PUSH_BACK_MASK) == 0)
+        memmove(edge->intersection_point, sizeof(*Intersection_point)*PUSH_BACK_THRES);
+    edge->intersection_point[edge->size++] = pt;
+}
 
 float max(float a, float b)
 {
@@ -80,6 +111,8 @@ typedef enum {
     LINE_SAME = 0;
     LINE_LEFT = 1,
     LINE_RIGHT = 2,
+    LINE_IN = 1,
+    LINE_OUT = 2
 } LINE_DIRECTION;
 
 typedef enum {
@@ -116,7 +149,7 @@ int line_orientation_v2(const Point* p, const Point* q, const Point* r)
     return (val <= 0)? LINE_LEFT: LINE_RIGHT; // clock or counterclock wise 
 }
 
-int line_orientation_v2(const Point* p, const Point* q, const Point* r) 
+int line_orientation_v3(const Point* p, const Point* q, const Point* r) 
 {
     int val = (q->y - p->y) * (r->x - q->x) - 
               (q->x - p->x) * (r->y - q->y); 
@@ -192,88 +225,9 @@ int line_doIntersect(const Point *p1, const Point *q1, const Point *p2, const Po
 
 static Point line_computeIntersection(const Point* pt1, const Point* pt2, const Point edge[2])
 {
-    Point intersecting_point = { };
+    Point intersection_point = { };
     const Point *pt3 = edge;
     const Point *pt4 = edge + 1;
-
-    float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
-    float x3_x4 = pt3->x - pt4->x;
-    float x1_x2 = pt1->x - pt2->x;
-    float x3y4_y3x4 = pt3->x * pt4->y - pt3->y * pt4->x;
-    float y3_y4 = pt3->y - pt4->y;
-    float y1_y2 = pt1->y - pt2->y;
-
-    float denom = x1_x2 * y3_y4 - y1_y2 * x3_x4;
-
-    if (denom == 0.0f ) return intersecting_point;
-
-    intersecting_point.x =
-    (x1y2_y1x2 * x3_x4 - x1_x2 * x3y4_y3x4) /
-    denom;
-    intersecting_point.y =
-    (x1y2_y1x2 * y3_y4 - y1_y2 * x3y4_y3x4) /
-    denom;
-
-    return intersecting_point;
-}
-
-static Point line_computeIntersection_v2(const Point* pt1, const Point* pt2, const Line_Ptr *edge)
-{
-    Point intersecting_point = { };
-    const Point *pt3 = edge->pts[0];
-    const Point *pt4 = edge->pts[1];
-
-    float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
-    float x3_x4 = pt3->x - pt4->x;
-    float x1_x2 = pt1->x - pt2->x;
-    float x3y4_y3x4 = pt3->x * pt4->y - pt3->y * pt4->x;
-    float y3_y4 = pt3->y - pt4->y;
-    float y1_y2 = pt1->y - pt2->y;
-
-    float denom = x1_x2 * y3_y4 - y1_y2 * x3_x4;
-
-    if (denom == 0.0f ) return intersecting_point;
-
-    intersecting_point.x =
-    (x1y2_y1x2 * x3_x4 - x1_x2 * x3y4_y3x4) /
-    denom;
-    intersecting_point.y =
-    (x1y2_y1x2 * y3_y4 - y1_y2 * x3y4_y3x4) /
-    denom;
-
-    return intersecting_point;
-}
-
-
-static Vert line_computeIntersection_v3(const Line_Ptr *edge, const Line_Ptr *query_edge)
-{
-    Vert intersection_point = {-1, {-1, -1} };
-    const Point *pt1 = edge->pts[0];
-    const Point *pt2 = edge->pts[1];
-    const Point *pt3 = query_edge->pts[0];
-    const Point *pt4 = query_edge->pts[1];
-
-    // filter out of box
-    if (pt4->x < pt1->x || pt4->y < pt1->y ||
-        pt3->x > pt2->x || pt3->y > pt2->y)
-        return intersection_point;
-
-    int pt3_orig = line_orientation_v3(pt1, pt2, pt3);
-    int pt4_orig = line_orientation_v3(pt1, pt2, pt4);
-
-
-    if (pt4_orig == LINE_SAME) {
-        intersection_point.type = VERT_SAME;
-        intersection_point.pt = *pt4;
-        return intersection_point;
-    }
-
-    // filter no intersection
-    if (pt3_orig == pt4_orig)
-        return intersection_point;
-    else
-        intersection_point.type = (pt4_orig == LINE_LEFT) ?
-                VERT_IN : VERT_OUT;
 
     float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
     float x3_x4 = pt3->x - pt4->x;
@@ -289,7 +243,87 @@ static Vert line_computeIntersection_v3(const Line_Ptr *edge, const Line_Ptr *qu
     intersection_point.x =
     (x1y2_y1x2 * x3_x4 - x1_x2 * x3y4_y3x4) /
     denom;
-    intersecting_point.y =
+    intersection_point.y =
+    (x1y2_y1x2 * y3_y4 - y1_y2 * x3y4_y3x4) /
+    denom;
+
+    return intersection_point;
+}
+
+static Point line_computeIntersection_v2(const Point* pt1, const Point* pt2, const Line_Ptr *edge)
+{
+    Point intersection_point = { };
+    const Point *pt3 = edge->pts[0];
+    const Point *pt4 = edge->pts[1];
+
+    float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
+    float x3_x4 = pt3->x - pt4->x;
+    float x1_x2 = pt1->x - pt2->x;
+    float x3y4_y3x4 = pt3->x * pt4->y - pt3->y * pt4->x;
+    float y3_y4 = pt3->y - pt4->y;
+    float y1_y2 = pt1->y - pt2->y;
+
+    float denom = x1_x2 * y3_y4 - y1_y2 * x3_x4;
+
+    if (denom == 0.0f ) return intersection_point;
+
+    intersection_point.x =
+    (x1y2_y1x2 * x3_x4 - x1_x2 * x3y4_y3x4) /
+    denom;
+    intersection_point.y =
+    (x1y2_y1x2 * y3_y4 - y1_y2 * x3y4_y3x4) /
+    denom;
+
+    return intersection_point;
+}
+
+
+static Intersection line_computeIntersection_v3(const Edge_Ptr *edge, const Edge_Ptr *query_edge)
+{
+    Intersection intersection_point = {UNDETERMINED, {NULL, NULL}, {-1, -1} };
+    const Point *pt1 = edge->prev;
+    const Point *pt2 = edge->curr;
+    const Point *pt3 = query_edge->prev;
+    const Point *pt4 = query_edge->curr;
+
+    // filter out of box
+    if (pt4->x < pt1->x || pt4->y < pt1->y ||
+        pt3->x > pt2->x || pt3->y > pt2->y)
+        return intersection_point;
+
+    int pt3_orig = line_orientation_v3(pt1, pt2, pt3);
+    int pt4_orig = line_orientation_v3(pt1, pt2, pt4);
+
+
+    if (pt4_orig == LINE_SAME) {
+        intersection_point.type = VERT_SAME;
+        intersection_point.pt = *pt4;
+        intersection_point.edges[0] = edge;
+        intersection_point.edges[1] = query_edge;
+        return intersection_point;
+    }
+
+    // filter no intersection
+    if (pt3_orig == pt4_orig)
+        return intersection_point;
+
+    float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
+    float x3_x4 = pt3->x - pt4->x;
+    float x1_x2 = pt1->x - pt2->x;
+    float x3y4_y3x4 = pt3->x * pt4->y - pt3->y * pt4->x;
+    float y3_y4 = pt3->y - pt4->y;
+    float y1_y2 = pt1->y - pt2->y;
+
+    float denom = x1_x2 * y3_y4 - y1_y2 * x3_x4;
+
+    if (denom == 0.0f ) return intersection_point;
+
+    intersection_point.type = (pt4_orig == LINE_LEFT) ? VERT_IN : VERT_OUT;
+
+    intersection_point.pt.x =
+    (x1y2_y1x2 * x3_x4 - x1_x2 * x3y4_y3x4) /
+    denom;
+    intersection_point.pt.y =
     (x1y2_y1x2 * y3_y4 - y1_y2 * x3y4_y3x4) /
     denom;
 
@@ -311,7 +345,7 @@ static void arr_free(Array2di arr)
     free(arr.data);
 }
 
-static Line poly_getEdge(const Polygon *polygon, int idx)
+static Line poly_getLine(const Polygon *polygon, int idx)
 {
     assert(idx < polygon->size);
     Line edge = { 
@@ -323,7 +357,7 @@ static Line poly_getEdge(const Polygon *polygon, int idx)
     return edge;
 }
 
-static Line_Ptr poly_getEdgePtr(Polygon *polygon, int idx)
+static Line_Ptr poly_getLinePtr(Polygon *polygon, int idx)
 {
     assert(idx < polygon->size);
     Line_Ptr edge = { 
@@ -333,6 +367,31 @@ static Line_Ptr poly_getEdgePtr(Polygon *polygon, int idx)
                 }
             };
     return edge;
+}
+
+static Edge_Ptr poly_getEdgePtr(Polygon *polygon, int idx)
+{
+    assert(idx < polygon->size);
+    Edge_Ptr edge = { 
+                .prev = &polygon->pts[(idx + polygon->size - 1) % polygon->size],
+                .curr = &polygon->pts[idx],
+                .intersection_point = NULL,
+                .size = 0,
+                .next = NULL
+                };
+    return edge;
+}
+
+static Edge_Ptr_List* poly_getEdgePtrList(Polygon *polygon)
+{
+    Edge_Ptr_List *edge_list = malloc(sizeof(Edge_Ptr_List));
+    edge_list->size = polygon->size;
+    for (int i = 0; i < polygon->size; ++i) {
+        edge_list->edges[i] = poly_getEdgePtr(polygon, i);
+        int next_idx = (i + polygon->size - 1) % polygon->size;
+        edge_list->edges[i].next = &edge_list->edges[next_idx];
+    }
+    return edge_list;
 }
 
 static inline void poly_empty(Polygon *polygon)
@@ -365,6 +424,46 @@ static int poly_checkType(Polygon* polygon)
             return CONCAVE;
     }
     return CONVEX;
+}
+
+int compare_func_hori_acc(void *a, void *b)
+{
+    return ((Intersection*)a)->x > ((Intersection*)b)->x;
+}
+
+int compare_func_hori_dec(void *a, void *b)
+{
+    return ((Intersection*)a)->x < ((Intersection*)b)->x;
+}
+
+int compare_func_vert_acc(void *a, void *b)
+{
+    return ((Intersection*)a)->y > ((Intersection*)b)->y;
+}
+
+int compare_func_vert_dec(void *a, void *b)
+{
+    return ((Intersection*)a)->y < ((Intersection*)b)->y;
+}
+
+static void edge_sortIntersection(Edge_Ptr *edge)
+{
+    int (*compare_func)(const void*, const void*);
+
+    if (edge->prev.x == edge->curr.x) {
+        if (edge->prev.y < edge->curr.y) {
+            compare_func = compare_func_vert_acc;
+        } else {
+            compare_func = compare_func_vert_dec;
+        }
+    } else {
+        if (edge->prev.x < edge->curr.x) {
+            compare_func = compare_func_hori_acc;
+        } else {
+            compare_func = compare_func_hori_dec;
+        }
+    }
+    qsort(edge->intersection_point, edge->size, sizeof(Intersection),compare_func);
 }
 
 float CLIP_getArea(const Polygon *polygon)
@@ -406,36 +505,189 @@ static Vert *vert_getLastPtr(Vert_List *list)
     return &list->vert[list->size-1];
 }
 
-static Clipper_result clip_concavePolygon(const Polygon *subj, const Polygon *clipper)
+static void poly_incrementResultPoly(Clipper_result *result)
+{
+    if (result->size == 0) {
+        result->polygon = (Polygon*)calloc(sizeof(Polygon) * INCRE_NUM);
+    } else if (result->size & INCRE_MASK == 0) {
+        memmove(result->polygon, sizeof(Polygon) * (result->size + INCRE_MASK));
+    }
+    result->size++;
+}
+
+static void poly_addResultPoly(Clipper_result *result, const Polygon *polygon)
+{
+    if (result->size == 0) {
+        result->polygon = (Polygon*)calloc(sizeof(Polygon) * INCRE_NUM);
+    } else if (result->size & INCRE_MASK == 0) {
+        memmove(result->polygon, sizeof(Polygon) * (result->size + INCRE_MASK));
+    }
+    result->polygon[result->size++] = *polygon;
+}
+
+
+static Clipper_result clip_genericPolygon(const Polygon *subj, const Polygon *clipper)
 {
     Clipper_result result = { };
     Vert_Ptr_List subj_list, clipper_list;
-    Vert_List intersection_point_list = { };
+    Intersection_point_list intersection_list = { };
+    Intersection *intersection;
+    Point *pt;
+    Polygon *poly;
+    // get all edges
+    Edge_Ptr_List subj_edges = poly_getEdgePtrList(subj);
+    Edge_Ptr_List clipper_edges = poly_getEdgePtrList(clipper);
+
     // get all intersection and orientation for subj polygon
     for (int c = 0; c < clipper->size; ++e) {
-        Line_Ptr clipEdge = poly_getEdgePtr(clipper, c);
+        Edge_Ptr *clip_edge = &clipper->edges[c];
         for (int s = 0; s < subj->size; ++s) {
-            Line_Ptr subjEdge = poly_getEdgePtr(subj, s);
-            Vert intersection_point = line_computeIntersection_v3(&subjEdge, &clipEdge);
+            Edge_Ptr *subj_edge = &subj_edges->edges[s];
+            Intersection intersection_point = line_computeIntersection_v3(subjEdge, clipEdge);
             if (intersection_point.type != UNDETERMINED) {
-                vert_addVert(&intersection_point_list, &intersection_point);
-                vert_addVertPtr(&subj_list, 
-                    vert_getLastPtr(&intersection_point_list));
+                intersection = &intersection_list.pts[intersection_list.size++];
+                *intersection = intersection_point;
+                edge_pushBackIntersection(subjEdge, pt);
+                edge_pushBackIntersection(clipEdge, pt);
             }
-            vert_addPointPtr(&subj_list, subjEdge.curr, VERT_NORM);
         }
     }
+    if (intersection_list.size == 0) {
+        Point *pt = &clipper->pts[0];
+        Edge_Ptr *edge = &subj_edges->edges[0];
+        if (line_orientation_v3(edge->prev, edge->curr, pt) == LINE_LEFT) {
+            // clipper polygon is inclusive.
+            edge_freeList(&subj_edges);
+            edge_freeList(&poly_edges);
+            poly_addResultPoly(&result, clipper);
+        }
+        return result;
+    }
 
-    // assign intersection point to clipper polygon 
-    
-        Polygon input_polygon;
-        poly_copy(output_polygon, &input_polygon);
-        poly_empty(output_polygon);
+    // sort intersection points
+    for (int c = 0; c < clipper_edges->size; ++e) {
+        Edge_Ptr clip_edge = clipper_edges->edges[c];
+        if (clip_edge.size >= 2)
+            edge_sortIntersection(clip_edge);
+    }
+    for (int s = 0; s < subj_edges->size; ++e) {
+        Edge_Ptr subj_edge = subj_edges->edges[c];
+        if (subj_edge.size >= 2)
+            edge_sortIntersection(subj_edge);
+    }
 
+    // assign intersection point to clipper polygon
+    int edge_index = 0;
+    Edge_Ptr *edge;
+    int *intersect_marker = (int*)calloc(intersection_list.size * sizeof(int));
+    int *vert_in_index = (int*)calloc(intersection_list.size * sizeof(int));
+    int vert_in_num = 0;
+
+    for (int i = 0; i < intersection_list.size; ++i) {
+        if (intersection_list.pts[i].type == VERT_IN)
+            vert_in_index[vert_in_num++] = i;
+    }
+
+    // get first intersection point vert in
+    // set origin intersection point // checked
+    // go to the subj edge
+    // while curr point is not origin intersection
+    //   1. if edge size == 1
+    //      if not jump
+    //      a. add intersection point // checked
+    //         curr pt = intersection point
+    //         jump to opposite edge
+    //         jump = 1
+    //      if jump:
+    //         add edge->curr point 
+    //         curr pt = edge->curr
+    //         edge = edge->ext
+    //         jump = 0
+    //   2 if edge size == 0
+    //      a. add edge->curr point 
+    //         curr pt == edge->curr
+    //         edge = edge->next
+    //         jump = 0
+    //   3 if edge size > 1
+    //     if jump
+    //     for i++;;
+    //         if edge.intersection[i].pt == curr
+    //            if i == edge->size-1
+    //                add edge->curr point
+    //                curr pt = edge->curr
+    //                edge = edge->next
+    //                jump = 0
+    //            else
+    //                add intersection point // checked
+    //                curr pt = intersection point
+    //                jump to opposite edge
+    //                jump = 1
+    //     if not jump       
+    //         add intersection point // checked
+    //         curr pt = intersection point
+    //         jump to opposite edge
+    //         jump = 1
+    // if curr point is origin intersection
+    //   turn all marked intersection complete
+    // for next vert in 
+    //   go back to while loop 
+    intersection = &intersection_list.pts[vert_in_index[0]];
+    intersect_marker[vert_in_index[0]] = 1; // marked
+    poly_incrementResultPoly(&result); // incre
+    poly = result.polygon[result->size-1]; // get polygon for result
+    poly_addPoint(poly, &intersection->pt); // add intersection pt;
+    edge = intersection->edge[1]; // get clipper edge;
+    while (1) {
+        if (edge->size == 0) {
+            if (start) {
+                // copy to polygon
+                poly = result.polygon[result->size-1];
+                poly_addPoint(poly, edge->curr);
+            } else 
+                continue;
+        } else if (edge->size == 1) {
+            poly_addPoint(poly, edge->curr);
+        } else {
+            for (int i = 0; i < edge->size; ++i) {
+                intersection = edge->intersection_point[i];
+                if (!start++) {
+                    if (intersection->type == VERT_IN) {
+                        // start polygon
+                        poly_incrementResultPoly(&result);
+                        poly = result.polygon[result->size-1];
+                        poly_addPoint(poly, &intersection->pt);
+                        intersection->type = VERT_CHECKED;
+                    }
+                    continue;
+                } else if (start) {
+                    poly = result.polygon[result->size-1];
+                    if (intersect->type == VERT_OUT) {
+                        poly_addPoint(poly, &intersection->pt);
+                        edge = edge == intersection->edges[0] ? intersection->edges[1] : intersection->edges[0];  
+                        edge = edge->next;
+                        intersection->type = VERT_CHECKED;
+                        break;
+                    } else if (intersection->type == VERT_SAME) {
+                        poly_addPoint(poly, &intersection->pt);
+                        intersection->type = VERT_CHECKED;
+                    } else if (intersection->type == VERT_CHECKED) {
+                        intersection->type = VERT_COMPLETE;
+                        start = 0;
+                    } else
+                       continue;
+                }
+            }
+            poly = result.polygon[result->size-1];
+            poly_addPoint(poly, edge->curr);
+        }
+        edge = edge.next;
     return result;
 }
 
-static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *clipper)
+#define INCRE_NUM 4
+#define INCRE_MASK 3
+
+static Clipper_result clip_convexConvexPolygon(const Polygon *subj, const Polygon *clipper)
 {
     Clipper_result result;
     result.size = 1;
@@ -444,7 +696,7 @@ static Clipper_result clip_convexPolygon(const Polygon *subj, const Polygon *cli
 
     poly_copy(subj, output_polygon);
     for (int e = 0; e < clipper->size; ++e) {
-        Line_Ptr clipEdge = poly_getEdgePtr(clipper, e);
+        Line_Ptr clipEdge = poly_getLinePtr(clipper, e);
         Polygon input_polygon;
         poly_copy(output_polygon, &input_polygon);
         poly_empty(output_polygon);
