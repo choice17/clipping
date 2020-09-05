@@ -9,11 +9,12 @@
 #define warn_fmt(x)   "[WARN] " x
 #define erro_fmt(x)   "[ERROR] " x
 #define trc_fmt(x) "[INFO] %s:%d " x
-#define clip_trc(x, args...) printf(trc_fmt(x), __func__, __LINE__, ##args)
-#define clip_log(x, args...) printf(info_fmt(x), ##args)
-#define clip_warn(x, args...) printf(warn_fmt(x), ##args)
-#define clip_info_h
-#define clip_info_l 
+#define clip_trc(fmt, args...) printf(trc_fmt(fmt), __func__, __LINE__, ##args)
+#define clip_log(fmt, args...) printf(info_fmt(fmt), ##args)
+#define clip_warn(fmt, args...) printf(warn_fmt(fmt), ##args)
+#define clip_err(fmt, args...) printf(erro_fmt(fmt), ##args)
+#define clip_info_h(fmt, args...)
+#define clip_info_l(fmt, args...)
 
 #define FIXED_POINT_SHIFT (8)
 #define FIXED_POINT_ONE (1 << FIXED_POINT_SHIFT)
@@ -21,9 +22,47 @@
 
 #define ROUND_DOWN(x) ((x + FIXED_POINT_HALF) >> FIXED_POINT_SHIFT)
 
-#define poly_free(x) (free(x))
 #define PUSH_BACK_THRES (8)
 #define PUSH_BACK_MASK (7)
+#define clip_assert(cond, msg) \
+    do {\
+        if (!(cond)) {\
+            clip_log("%s",msg);\
+            assert(cond);\
+        }\
+    } while(0)
+
+#define poly_free(x) (free(x))
+#define sign(x) (((x) < 0) ? -1 : 1)
+float max(float a, float b)
+{
+    return ( a > b ) ? a : b;
+}
+
+float min(float a, float b)
+{
+    return ( a < b ) ? a : b;
+}
+
+float mean3way(float a, float b, float c)
+{
+    return (a + b + c) * 0.333333f;    
+}
+
+#define define_clamp(type) \
+inline type clamp_##type(type a, type low, type high) \
+{ \
+    return ( a < low ) ? low : ( ( a > high ) ? high : a ); \
+}
+
+#define clampT(type) clamp_##type
+define_clamp(int)
+define_clamp(float)
+
+int clamp(int a, int low, int high)
+{
+    return ( a < low ) ? low : ( ( a > high ) ? high : a );
+}
 
 const char *poly_type_str[] = {
     "Undetermined",
@@ -37,13 +76,17 @@ typedef union {
         Point *prev;
         Point *curr;
     };
+    struct {
+        Point *from;
+        Point *to;
+    };
 } Line_Ptr;
 
 
-typedef struct _Intersection Intersection;
-typedef struct _Edge_Ptr Edge_Ptr;
+typedef struct Intersection Intersection;
+typedef struct Edge_Ptr Edge_Ptr;
 
-struct _Edge_Ptr {
+struct Edge_Ptr {
     Point *prev;
     Point *curr;
     Intersection **intersection_point;
@@ -56,7 +99,7 @@ typedef struct {
     int size; 
 } Edge_Ptr_List;
 
-struct _Intersection{
+struct Intersection{
     int type;
     Edge_Ptr *edges[2];
     Point pt;
@@ -88,21 +131,6 @@ void edge_pushBackIntersection(Edge_Ptr *edge, Intersection *pt)
         memmove((void *)edge->intersection_point, (void *)edge->intersection_point, sizeof(Intersection*)*PUSH_BACK_THRES);
     }
     edge->intersection_point[edge->size++] = pt;
-}
-
-float max(float a, float b)
-{
-    return ( a > b ) ? a : b;
-}
-
-float min(float a, float b)
-{
-    return ( a < b ) ? a : b;
-}
-
-int clamp(int a, int low, int high)
-{
-    return ( a < low ) ? low : ( ( a > high ) ? high : a );
 }
 
 static int line_onSegment(const Point* p, const Point* q, const Point* r) 
@@ -345,6 +373,17 @@ static Array2di arr_init2di(int w, int h)
     return arr;
 }
 
+static inline int arr_get(Array2di *arr, int x, int y)
+{
+    return arr->data[y*arr->w+x];
+}
+
+static inline void arr_fill(Array2di *arr, int x, int y, int val)
+{
+    arr->data[y*arr->w+x] = val;
+}
+
+
 static void arr_free(Array2di arr)
 {
     free(arr.data);
@@ -532,6 +571,19 @@ static void poly_addResultPoly(Clipper_result *result, const Polygon *polygon)
     result->polygon[result->size++] = *polygon;
 }
 
+static int poly_checkIfPointInside(Polygon *poly, const Point *pt)
+{
+    const Line line = {.from=*pt, .to={99999.9f,pt->y}};
+    Line_Ptr edge; 
+    int intersection_count = 0;
+    for (int i = 0; i < poly->size; ++i) {
+        edge = poly_getLinePtr(poly, i);
+        intersection_count += line_doIntersect(edge.from, edge.to, &line.from, &line.to);
+    }
+    if (intersection_count & 0x1)
+        return 1;
+    return 0;
+}
 
 static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon *in_clipper)
 {
@@ -858,6 +910,74 @@ int CLIP_drawLine(const Point line[2], Array2di* arr, int thickness)
     return 0;
 }
 
+int CLIP_drawLinePtr(const Point *line[2], Array2di* arr, int thickness)
+{
+    int h = arr->h;
+    int w = arr->w;
+
+    int sx = clamp((int)line[0]->x, 0, w-1);
+    int sy = clamp((int)line[0]->y, 0, h-1);
+    int ex = clamp((int)line[1]->x, 0, w-1);
+    int ey = clamp((int)line[1]->y, 0, h-1);
+
+    const int dy = (ey - sy);
+    const int dx = (ex - sx);
+
+    int slope_fixed = 0;
+    if (dy == 0)      { slope_fixed = 0; }
+    else if (dx == 0) { slope_fixed = 0x7fffffff; }
+    else              { slope_fixed = (dy << FIXED_POINT_SHIFT)
+                       /dx ; }
+
+    const int slope_fixed_abs = abs(slope_fixed);
+
+    int x_fixed = sx << FIXED_POINT_SHIFT;
+    int y_fixed = sy << FIXED_POINT_SHIFT;
+    int dx_fixed = 1, dy_fixed = 1;
+    int thickhalf = thickness >> 1;
+    int signx = 1, signy = 1;
+    if (dy < 0 && dx < 0) {
+        signx = -1; signy = -1;
+        dy_fixed = -1; dx_fixed = -1;
+    }
+    else if (dy < 0) { signy = -1; dy_fixed = -1; }
+    else if (dx < 0) { signx = -1; dx_fixed = -1; }
+    int x, y;
+    //printf("xy: %d %d => %d %d dxy: %d %d\n", sx, sy, ex, ey, dx, dy);
+    //printf("slope fixed => %d vs one %d \n", slope_fixed, FIXED_POINT_ONE);
+    //printf("sign %d %d th(%d)\n", signx, signy,  thickhalf);
+    if (slope_fixed_abs >= FIXED_POINT_ONE) {
+        dx_fixed *= (FIXED_POINT_ONE << FIXED_POINT_SHIFT) / slope_fixed_abs;
+        while (1) {
+            x = ROUND_DOWN(x_fixed);
+            int start = clamp(x - thickhalf, 0, w);
+            int end = clamp(x - thickhalf + thickness, 0, w);
+            for (int i = start; i < end; ++i) {
+                arr->data[sy*w + i] = 1;
+            }
+            if (sy == ey)
+                break;
+            x_fixed += dx_fixed;
+            sy+=signy;
+        }
+    } else {
+        dy_fixed *= ROUND_DOWN(FIXED_POINT_ONE * slope_fixed_abs);
+        while (1) {
+            y = ROUND_DOWN(y_fixed);
+            int start = clamp(y - thickhalf, 0, h);
+            int end = clamp(y - thickhalf + thickness, 0, h);
+            for (int i = start; i < end; ++i) {
+                arr->data[i*w + sx] = 1;
+            }
+            if (sx == ex)
+                break;
+            y_fixed += dy_fixed;
+            sx+=signx;
+        }
+    }
+    return 0;
+}
+
 void CLIP_printArr(const Array2di* arr)
 {
     const int h = arr->h;
@@ -869,8 +989,11 @@ void CLIP_printArr(const Array2di* arr)
     for (int i = 0; i < h; ++i) {
         printf("%d", i % 10);
         for (int j = 0; j < w; ++j) {
-            if (arr->data[i*w + j] != 0)
+            int val = arr->data[i*w + j];
+            if (val == 1)
                 printf("X");
+            else if (val == 2)
+                printf("O");
             else
                 printf("-");
         }
@@ -878,6 +1001,12 @@ void CLIP_printArr(const Array2di* arr)
     }
 }
 
+
+int CLIP_drawPoint(const Point *pt, Array2di *arr, int val)
+{
+    arr_fill(arr, pt->x, pt->y, val);
+    return 0;
+}
 
 int CLIP_drawPoly(const Polygon *polygon, Array2di *arr)
 {
@@ -887,79 +1016,218 @@ int CLIP_drawPoly(const Polygon *polygon, Array2di *arr)
     }
     return 0;
 }
+
+
+static void poly_floodFill(Array2di *arr, int x, int y, int val)
+{
+    if (arr_get(arr, x, y)) return;
+    arr_fill(arr, x, y, val);
+    poly_floodFill(arr, x-1, y, val);
+    poly_floodFill(arr, x+1, y, val);
+    poly_floodFill(arr, x, y-1, val);
+    poly_floodFill(arr, x, y+1, val);
+}
+
+int CLIP_fillPoly(const Polygon *polygon, Array2di *arr, int val)
+{
+    const int size = polygon->size;
+    Polygon poly = *polygon;
+    Line_Ptr *line = (Line_Ptr*)malloc(sizeof(Line_Ptr)*size);
+    Point fill_point = {}; 
+    const Point *prev = NULL;
+    const Point *cur = NULL;
+    const Point *next = NULL;
+
+    for (int i = 0; i < size; ++i) {
+        line[i] = poly_getLinePtr(&poly, i);
+        CLIP_drawLinePtr((const Point**)line[i].pts, arr, 1);
+    }
+    for (int i = 0; i < size; ++i) {
+        prev = &poly.pts[(i + size - 1) % size];
+        cur = &poly.pts[i];
+        next = &poly.pts[(i + 1) % size];
+        if (line_orientation(prev, next, cur) == LINE_RIGHT)
+            continue;
+        else {
+            fill_point.x = mean3way(prev->x, cur->x, next->x);
+            fill_point.y = mean3way(prev->y, cur->y, next->y);
+            int signx = sign(fill_point.x-cur->x);
+            int signy = sign(fill_point.y-cur->y);
+            fill_point.x = cur->x + signx * 1.5f;
+            fill_point.y = cur->y + signy * 1.5f;
+            int isinside = poly_checkIfPointInside(&poly, &fill_point);
+            clip_trc("3 way[%.1f,%.1f,%.1f]->%.1f,[%.1f,%.1f,%.1f]->%.1f inside?[%d]\n",
+                prev->x, cur->x, next->x, fill_point.x,
+                prev->y, cur->y, next->y, fill_point.y, isinside);
+            if (isinside)
+                poly_floodFill(arr, (int)fill_point.x, (int)fill_point.y, val);
+            //CLIP_drawPoint(&fill_point, arr, 2);
+        }
+    }
+    
+    return 0;   
+}
+
+void example1(char **argv)
+{
+    Array2di arr = arr_init2di(50,35);
+    Point pts[2];
+    pts[0].x = atof(argv[2]);
+    pts[0].y = atof(argv[3]);
+    pts[1].x = atof(argv[4]);
+    pts[1].y = atof(argv[5]);
+    int th = atoi(argv[6]);
+    CLIP_drawLine(pts, &arr, th);
+    CLIP_printArr(&arr);
+    arr_free(arr);
+}
+
+void example2(char **argv)
+{
+    int num = atoi(argv[2]);
+    clip_assert(num >= 3, "polygon points should be greater than 3\n");
+    Polygon poly = { };
+    int idx = 3;
+    for (int i = idx; i < idx + (num) * 2; i+=2) {
+        poly.pts[poly.size++] = (Point){atof(argv[i]), atof(argv[i+1])};
+        printf("(%2.1f  %2.1f) ", poly.pts[poly.size-1].x, poly.pts[poly.size-1].y);
+    }
+    printf("\n");
+    float area = CLIP_getArea(&poly);
+    int type = poly_checkType(&poly);
+    clip_log("num %d, area is %.4f\n", num, area);
+    clip_log("type is %s\n", poly_type_str[type]);
+
+    Array2di arr = arr_init2di(50,25);
+    for (int i = 0; i < num; ++i) {
+        Line line = poly_getLine(&poly, i);
+        CLIP_drawLine(line.pts, &arr, 1);
+    }
+    CLIP_printArr(&arr);
+    arr_free(arr);
+}
+
+void example3(char **argv)
+{
+    int num = atoi(argv[2]);
+    clip_assert(num >= 3, "polygon points should be greater than 3\n");
+    Polygon poly = { };
+    int idx = 3;
+    for (int i = idx; i < idx + (num) * 2; i+=2) {
+        poly.pts[poly.size++] = (Point){atof(argv[i]), atof(argv[i+1])};
+        printf("(%2.1f  %2.1f) ", poly.pts[poly.size-1].x, poly.pts[poly.size-1].y);
+    }
+    printf("\n");
+    float area = CLIP_getArea(&poly);
+    int type = poly_checkType(&poly);
+    clip_log("num %d, area is %.4f\n", num, area);
+    clip_log("type is %s\n", poly_type_str[type]);
+
+    Array2di arr = arr_init2di(50,25);
+    CLIP_fillPoly(&poly, &arr, 1);
+    CLIP_printArr(&arr);
+    arr_free(arr);
+}
+
+void example4(char **argv)
+{
+    // check point inside polygon
+    int num = atoi(argv[2]);
+    clip_assert(num >= 3, "polygon points should be greater than 3\n");
+    Polygon poly = { };
+    int idx = 3;
+    int i = idx;
+    printf("Polygon:\n");
+    for (i = idx; i < idx + (num) * 2; i+=2) {
+        poly.pts[poly.size++] = (Point){atof(argv[i]), atof(argv[i+1])};
+        printf("(%2.1f  %2.1f) ", poly.pts[poly.size-1].x, poly.pts[poly.size-1].y);
+    }
+    printf("\n");
+    Point pt = {atof(argv[i]), atof(argv[i+1])};
+    printf("Point:\n");
+    printf("(%2.1f  %2.1f) \n", pt.x, pt.y);
+    float area = CLIP_getArea(&poly);
+    int type = poly_checkType(&poly);
+    clip_log("num %d, area is %.4f\n", num, area);
+    clip_log("type is %s\n", poly_type_str[type]);
+
+    Array2di arr = arr_init2di(50,25);
+    CLIP_drawPoly(&poly, &arr);
+    CLIP_drawPoint(&pt, &arr, 2);
+    CLIP_printArr(&arr);
+    int ifinside = poly_checkIfPointInside(&poly, &pt);
+    clip_log("Result is %d\n", ifinside);
+}
+
+void example5(char **argv)
+{
+   Polygon subj = {.size=4,
+        .pts = {
+            {5, 0},
+            {10, 0},
+            {10, 20},
+            {5, 10}
+        }};
+    Polygon clipper = {.size=4,
+        .pts = {
+            {0, 5},
+            {20, 5},
+            {20, 15},
+            {0, 15}
+        }};
+    subj.type = poly_checkType(&subj);
+    clipper.type = poly_checkType(&clipper);
+    Array2di arr = arr_init2di(30,25);
+    CLIP_drawPoly(&subj, &arr);
+    CLIP_drawPoly(&clipper, &arr);
+    CLIP_printArr(&arr);
+    arr_free(arr);
+
+    Clipper_result result = CLIP_clipPolygon(&subj, &clipper);
+    clip_log("subj: %s vs clipper: %s\n",
+        poly_type_str[subj.type],
+        poly_type_str[clipper.type]);
+    Polygon *poly = result.polygon;
+    for (int i = 0; i < result.polygon[0].size; ++i) {
+        clip_log("(%d: %.2f %.2f)\n", i, poly->pts[i].x,
+            poly->pts[i].y);
+    }
+    clip_log("output area is %.2f\n",CLIP_getArea(poly));
+    arr = arr_init2di(30,25);
+    CLIP_drawPoly(poly, &arr);
+    CLIP_printArr(&arr);
+    arr_free(arr);
+}
+
+const char *helper_str = {
+    "\t>>>>>>>>>>  helper str >>>>>>>>>>>>>>>>>\n"
+    "\t-l\tdraw line from <sx> <sy> <ex> <ey>\n"
+    "\t-a\tcalc and draw polygon outline pt >= 3\n"
+    "\t-f\tcalc and fill polygon pt >= 3\n"
+    "\t-ch\ttest if pt inside polygon <num> <polygon> <pt>\n"
+    "\t-c\tclip convex polygons example\n"
+};
+
 int main(int argc, char **argv)
 {
     // draw line app
+    clip_assert(argc>1, helper_str);
+
     if (strcmp(argv[1], "-l")==0) {
-        Array2di arr = arr_init2di(50,35);
-        Point pts[2];
-        pts[0].x = atof(argv[2]);
-        pts[0].y = atof(argv[3]);
-        pts[1].x = atof(argv[4]);
-        pts[1].y = atof(argv[5]);
-        int th = atoi(argv[6]);
-        CLIP_drawLine(pts, &arr, th);
-        CLIP_printArr(&arr);
-        arr_free(arr);
+        clip_assert(argc==7, helper_str);
+        example1(argv);
     } else if (strcmp(argv[1], "-a")==0) {
-        int num = atoi(argv[2]);
-        Polygon poly = { };
-        int idx = 3;
-        for (int i = idx; i < idx + (num) * 2; i+=2) {
-            poly.pts[poly.size++] = (Point){atof(argv[i]), atof(argv[i+1])};
-            printf("(%2.1f  %2.1f) ", poly.pts[poly.size-1].x, poly.pts[poly.size-1].y);
-        }
-        printf("\n");
-        float area = CLIP_getArea(&poly);
-        int type = poly_checkType(&poly);
-        clip_log("num %d, area is %.4f\n", num, area);
-        clip_log("type is %s\n", poly_type_str[type]);
-
-        Array2di arr = arr_init2di(30,20);
-        for (int i = 0; i < num; ++i) {
-            Line line = poly_getLine(&poly, i);
-            CLIP_drawLine(line.pts, &arr, 1);
-        }
-        CLIP_printArr(&arr);
-        arr_free(arr);
+        clip_assert(((argc-2) & 1) == 1 && argc > 8, helper_str);
+        example2(argv);
+    } else if (strcmp(argv[1], "-f")==0) {
+        clip_assert(((argc-2) & 1) == 1 && argc > 8, helper_str);
+        example3(argv);
+    } else if (strcmp(argv[1], "-ch")==0) {
+        example4(argv);
     } else if (strcmp(argv[1], "-c")==0) {
-        Polygon subj = {.size=4,
-            .pts = {
-                {5, 0},
-                {10, 0},
-                {10, 20},
-                {5, 10}
-            }};
-        Polygon clipper = {.size=4,
-            .pts = {
-                {0, 5},
-                {20, 5},
-                {20, 15},
-                {0, 15}
-            }};
-        subj.type = poly_checkType(&subj);
-        clipper.type = poly_checkType(&clipper);
-        Array2di arr = arr_init2di(30,25);
-        CLIP_drawPoly(&subj, &arr);
-        CLIP_drawPoly(&clipper, &arr);
-        CLIP_printArr(&arr);
-        arr_free(arr);
-
-        Clipper_result result = CLIP_clipPolygon(&subj, &clipper);
-        clip_log("subj: %s vs clipper: %s\n",
-            poly_type_str[subj.type],
-            poly_type_str[clipper.type]);
-        Polygon *poly = result.polygon;
-        for (int i = 0; i < result.polygon[0].size; ++i) {
-            clip_log("(%d: %.2f %.2f)\n", i, poly->pts[i].x,
-                poly->pts[i].y);
-        }
-        clip_log("output area is %.2f\n",CLIP_getArea(poly));
-        arr = arr_init2di(30,25);
-        CLIP_drawPoly(poly, &arr);
-        CLIP_printArr(&arr);
-        arr_free(arr);
-
+        example5(argv);
+    } else {
+        clip_log("%s",helper_str);
     }
     return 0;
 }
