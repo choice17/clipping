@@ -54,9 +54,9 @@ typedef struct {
 
 int CLIP_checkIsConvex(const Polygon *polygon);
 float CLIP_getArea(const Polygon *polygon);
-int CLIP_drawPoly(const Polygon *polygon, Array2di* arr);
+int CLIP_drawPoly(const Polygon *polygon, Array2di* arr, int val);
 int CLIP_fillPoly(const Polygon *polygon, Array2di* arr, int val);
-int CLIP_drawLine(const Point line[2], Array2di* arr, int thickness);
+int CLIP_drawLine(const Point line[2], Array2di* arr, int thickness, int val);
 void CLIP_printArr(const Array2di* arr);
 Clipper_result CLIP_clipPolygon(const Polygon *subj, const Polygon *clipper);
 
