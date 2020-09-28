@@ -464,6 +464,7 @@ static inline void poly_addPoint(Polygon* polygon, const Point *pt)
 {
     assert(polygon->size < MAX_POINTS);
     polygon->pts[polygon->size++] = *pt;
+    printf("poly size:%d [%.2f, %2f]\n", polygon->size, pt->x, pt->y);
 }
 
 static int poly_checkType(Polygon* polygon)
@@ -510,20 +511,26 @@ static void edge_sortIntersection(Edge_Ptr *edge)
 {
     int (*compare_func)(const void*, const void*);
     float slope = edge_calcSlope(edge);
-    if (abs(slope) >= 1.0) {
-        if (edge->curr->y >= edge->curr->y) {
+    int i = 0;
+    if (abs(slope) > 1.0) {
+        if (edge->curr->y >= edge->prev->y) {
             compare_func = compare_func_vert_acc;
+            i = 0;
         } else {
             compare_func = compare_func_vert_dec;
+            i = 1;
         }
     } else {
-        if (edge->curr->x >= edge->curr->x) {
+        if (edge->curr->x >= edge->prev->x) {
             compare_func = compare_func_hori_acc;
+            i = 2;
         } else {
             compare_func = compare_func_hori_dec;
+            i = 3;
         }
     }
-    qsort(edge->intersection_point, edge->size, sizeof(Intersection*),compare_func);
+    printf("sort:slope:%.2f type=%d\n", slope, i);
+    qsort(edge->intersection_point, edge->size, sizeof(Intersection**),compare_func);
 }
 
 float CLIP_getArea(const Polygon *polygon)
@@ -622,18 +629,21 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
         for (int s = 0; s < subj->size; ++s) {
             Edge_Ptr *subj_edge = &subj_edges->edges[s];
             Intersection intersection_point = line_computeIntersection_v3(subj_edge, clip_edge);
-            printf("C:%d[%2.f,%2.f][%2.f,%2.f] - S:%d[%2.f,%2.f][%2.f,%2.f] Inter:(%d)[%2.2f-%2.2f]\n",
-                c,clip_edge->prev->x,clip_edge->prev->y,
-                clip_edge->curr->x,clip_edge->curr->y,
-                s,subj_edge->prev->x,subj_edge->prev->y,
-                subj_edge->curr->x,subj_edge->curr->y,
-                intersection_point.type,intersection_point.pt.x,intersection_point.pt.y);
             if (intersection_point.type != VERT_UNDERTERMINED) {
                 intersection = &intersection_list.pts[intersection_list.size++];
                 *intersection = intersection_point;
                 edge_pushBackIntersection(subj_edge, intersection);
+                //for (int ii = 0; ii < subj_edge->size; ii++)
+                //    printf("subj subj_edge#(%d) :%d(%p) -> inter %p\n", s, ii, subj_edge, subj_edge->intersection_point[ii]);
                 edge_pushBackIntersection(clip_edge, intersection);
-            }
+            } else continue;
+            clip_info_l("C:%d,%p,[%2.f,%2.f][%2.f,%2.f] - S:%d,%p,[%2.f,%2.f][%2.f,%2.f] Inter:(%d)(%p)[%2.2f-%2.2f] L:%p,R:%p\n",
+                c,clip_edge,clip_edge->prev->x,clip_edge->prev->y,
+                clip_edge->curr->x,clip_edge->curr->y,
+                s,subj_edge,subj_edge->prev->x,subj_edge->prev->y,
+                subj_edge->curr->x,subj_edge->curr->y,
+                intersection_point.type,intersection,intersection_point.pt.x,intersection_point.pt.y,
+                intersection_point.edges[0], intersection_point.edges[1]);
         }
     }
     if (intersection_list.size == 0) {
@@ -648,17 +658,34 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
         return result;
     }
 
-    // sort intersection points
     for (int c = 0; c < clipper_edges->size; ++c) {
         Edge_Ptr *clip_edge = &clipper_edges->edges[c];
         if (clip_edge->size > 1)
             edge_sortIntersection(clip_edge);
+        clip_info_l("clip_edge %d:%p-> %p[%.2f,%.2f] %p[%.2f,%.2f]\n", c, clip_edge,
+            (clip_edge->size >= 1) ? *clip_edge->intersection_point :0,
+            (clip_edge->size >= 1) ? clip_edge->intersection_point[0]->pt.x :0,
+            (clip_edge->size >= 1) ? clip_edge->intersection_point[0]->pt.y :0,
+            (clip_edge->size >= 2) ? *(clip_edge->intersection_point+1) :0,
+            (clip_edge->size >= 2) ? clip_edge->intersection_point[1]->pt.x :0,
+            (clip_edge->size >= 2) ? clip_edge->intersection_point[1]->pt.y :0);
     }
     for (int s = 0; s < subj_edges->size; ++s) {
         Edge_Ptr *subj_edge = &subj_edges->edges[s];
         if (subj_edge->size > 1)
             edge_sortIntersection(subj_edge);
+        clip_info_l("subj_edge %d:%p-> %p[%.2f,%.2f] %p[%.2f,%.2f]\n", s, subj_edge,
+          (subj_edge->size >= 1) ? *subj_edge->intersection_point :0,
+          (subj_edge->size >= 1) ? subj_edge->intersection_point[0]->pt.x :0,
+          (subj_edge->size >= 1) ? subj_edge->intersection_point[0]->pt.y :0,
+          (subj_edge->size >= 2) ? *(subj_edge->intersection_point+1) :0,
+          (subj_edge->size >= 2) ? subj_edge->intersection_point[1]->pt.x :0,
+          (subj_edge->size >= 2) ? subj_edge->intersection_point[1]->pt.y :0);
     }
+
+    // sort intersection points
+
+
 
     // assign intersection point to clipper polygon
     Edge_Ptr const *edge;
@@ -669,11 +696,20 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
     for (int i = 0; i < intersection_list.size; ++i) {
         if (intersection_list.pts[i].type == VERT_IN)
             vert_in_index[vert_in_num++] = i;
+        clip_info_l("inter:%d %p -> edge:%p %p\n", i, &intersection_list.pts[i],
+            intersection_list.pts[i].edges[0],
+            intersection_list.pts[i].edges[1]);
     }
     
     // if find vert_in in intersection_list // tranverse clipper list
     while (1) {
         int i;
+        for (i = 0; i < intersection_list.size; ++i) {
+            clip_info_l("%d inter:[%.2f,%.2f] type:%d\n", i,
+                intersection_list.pts[i].pt.x,
+                intersection_list.pts[i].pt.y,
+                intersection_list.pts[i].type);
+        }
         for (i = 0; i < vert_in_num; ++i) {
             if (intersection_list.pts[vert_in_index[i]].type == VERT_IN)
                 break;
@@ -682,105 +718,78 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
             break;
         intersection = &intersection_list.pts[vert_in_index[i]];
         // set origin intersection point // checked
-        Point *orig = &intersection->pt;
-        Point *curr = orig;
+        Intersection *orig = intersection;
+        Intersection *curr = orig;
         // go to the subj edge
         poly_incrementResultPoly(&result);
+        clip_info_l("polygon result size:%d\n", result.size);
         poly = &result.polygon[result.size-1];
-        edge = intersection->edges[0];
-        int jump = 0;
-        // while curr point is not origin intersection
-        while (curr != orig) {
-        //   1. if edge size == 1
+        poly_addPoint(poly, &curr->pt);
+        curr->type = VERT_CHECKED;
+        edge = intersection->edges[1];
+        int jump = 1;
+        do {
+            clip_info_l("edge size %d.jump:%d\n", edge->size, jump);
+            int i = -1;
             if (edge->size == 1) {
                if (!jump) {
-        //      if not jump
-        //      a. add intersection point // checked
-                    poly_addPoint(poly, &edge->intersection_point[0]->pt);
-        //          curr pt = intersection point
-                    curr = &edge->intersection_point[0]->pt;
-        //          jump to opposite edge
-                    edge = (edge->intersection_point[0]->edges[0] == edge) ?
-                        edge->intersection_point[0]->edges[1] :
-                        edge->intersection_point[0]->edges[0];
-                    edge->intersection_point[0]->type = VERT_CHECKED;
-        //          jump = 1
+                    curr = edge->intersection_point[0];
+                    poly_addPoint(poly, &curr->pt);
+                    edge = (curr->edges[0] == edge) ?
+                        curr->edges[1] :
+                        curr->edges[0];
+                    curr->type = VERT_CHECKED;
                     jump = 1;
-        //      if jump:
                 } else {
-        //          add edge->curr point 
                     poly_addPoint(poly, edge->curr);
-        //          curr pt = edge->curr
-                    curr = edge->curr;
-        //          edge = edge->ext
                     edge = edge->next;
-        //          jump = 0
+                    curr = NULL;
                     jump = 0;
                 }
-                continue;
         //   2 if edge size == 0
-            } else if (edge->size == 0) {
-        //      a. add edge->curr point 
+            } else if (edge->size == 0) { // ?
                 poly_addPoint(poly, edge->curr);
-        //         curr pt == edge->curr
-                curr = edge->curr;
-        //         edge = edge->next
                 edge = edge->next;
-        //         jump = 0
+                curr = NULL;
                 jump = 0;
         //   3 if edge size > 1
             } else if (edge->size > 1) {
-        //     if jump
                 if (jump) {
-        //     for i++;;
-                    int i;
                     for (i = 0; i < edge->size; ++i) {
-        //         if edge.intersection[i].pt == curr
-                        if (&edge->intersection_point[i]->pt == curr)
+                        if (edge->intersection_point[i] == curr)
                             break;
                     }
-        //            if i == edge->size-1
-                    if (i == edge->size-1) {
-        //                add edge->curr point
+                    if (i == (edge->size-1)) {
                         poly_addPoint(poly, edge->curr);
-        //                curr pt = edge->curr
-                        curr = edge->curr;
-        //                edge = edge->next
+                        curr = NULL;
                         edge = edge->next;
-        //                jump = 0
                         jump = 0;
-        //            else
                     } else if (i < edge->size-1) {
-        //                add intersection point // checked
-                        poly_addPoint(poly, &edge->intersection_point[i]->pt);
-        //                curr pt = intersection point
-                        curr = &edge->intersection_point[i]->pt;
-        //                jump to opposite edge
-                        edge = (edge->intersection_point[i]->edges[0] == edge) ?
-                            edge->intersection_point[i]->edges[1] :
-                            edge->intersection_point[i]->edges[0];
-        //                jump = 1
-                        edge->intersection_point[i]->type = VERT_CHECKED;
+                        i++;
+                        curr = edge->intersection_point[i];
+                        if (curr == orig)
+                            break;
+                        poly_addPoint(poly, &curr->pt);
+                        edge = (curr->edges[0] == edge) ?
+                            curr->edges[1] :
+                            curr->edges[0];
+                        curr->type = VERT_CHECKED;
                         jump = 1;
                     } else {
                         assert(0);
                     }
-        //     if not jump
-                } else {       
-        //         add intersection point // checked
+                } else {
                     poly_addPoint(poly, &edge->intersection_point[0]->pt);
-        //         curr pt = intersection point
-                    curr = &edge->intersection_point[0]->pt;
-        //         jump to opposite edge
-                    edge = (edge->intersection_point[i]->edges[0] == edge) ?
-                            edge->intersection_point[i]->edges[1]:
-                            edge->intersection_point[i]->edges[0];
-        //         jump = 1
-                    edge->intersection_point[i]->type = VERT_CHECKED;
+                    curr = edge->intersection_point[0];
+                    edge = (edge->intersection_point[0]->edges[0] == edge) ?
+                            edge->intersection_point[0]->edges[1]:
+                            edge->intersection_point[0]->edges[0];
+                    curr->type = VERT_CHECKED;
                     jump = 1;
                 }
             }
-        }
+            clip_info_l("edge size %d.jump:%d,i:%d\n", edge->size, jump, i);
+        } while (curr != orig);
         // if curr point is origin intersection
         //   turn all marked intersection complete
         // for next vert in 
@@ -1257,14 +1266,19 @@ void example6(char **argv)
     clip_log("subj: %s vs clipper: %s\n",
         poly_type_str[subj.type],
         poly_type_str[clipper.type]);
-    Polygon *poly = result.polygon;
-    for (int i = 0; i < result.polygon[0].size; ++i) {
-        clip_log("(%d: %.2f %.2f)\n", i, poly->pts[i].x,
-            poly->pts[i].y);
+    for (int j = 0; j < result.size; ++j) { 
+        Polygon *poly = &result.polygon[j];
+        for (int i = 0; i < poly->size; ++i) {
+            clip_log("res:%d (%d: %.2f %.2f)\n", j, i, poly->pts[i].x,
+                poly->pts[i].y);
+        }
+        clip_log("output area is %.2f\n",CLIP_getArea(poly));
     }
-    clip_log("output area is %.2f\n",CLIP_getArea(poly));
     arr = arr_init2di(60,30);
-    CLIP_drawPoly(poly, &arr, 1);
+    for (int j = 0; j < result.size; ++j) { 
+        Polygon *poly = &result.polygon[j];
+        CLIP_drawPoly(poly, &arr, j+1);
+    }
     CLIP_printArr(&arr);
     arr_free(arr);
 }
