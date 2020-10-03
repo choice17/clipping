@@ -222,6 +222,48 @@ int line_doIntersect(const Point *p1, const Point *q1, const Point *p2, const Po
     return 0; // Doesn't fall in any of the above cases 
 } 
   
+int line_doIntersectv2(const Point *p1, const Point *q1, const Point *p2, const Point *q2) 
+{ 
+    // Find the four orientations needed for general and 
+    // special cases 
+    #if 0
+    if (!memcmp(p1, p2, sizeof(Point)) || !memcmp(q1, p2, sizeof(Point)) ||
+        !memcmp(p1, q2, sizeof(Point)))
+    {
+        
+        clip_trc("%.4f, %.4f -  %.4f, %.4f vs  %.4f, %.4f - %.4f, %.4f \n",
+            p1->x, p1->y, q1->x, q1->y, p2->x, p2->y, q2->x, q2->y);
+        clip_trc("%d %d\n",memcmp(p1, p2, sizeof(Point)), memcmp(p1, q2, sizeof(Point)));
+        return 0; 
+    }
+    #endif
+    int o1 = line_orientation(p1, q1, p2); 
+    int o2 = line_orientation(p1, q1, q2); 
+    int o3 = line_orientation(p2, q2, p1); 
+    int o4 = line_orientation(p2, q2, q1); 
+  
+    // General case
+    clip_info_l("o[%d %d %d %d]\n", o1, o2, o3, o4);
+    if (o1 == 0 || o3 == 0)
+        return 0;
+    if (o1 != o2 && o3 != o4)
+        return 1; 
+  
+    // Special Cases 
+    // p1, q1 and p2 are colinear and p2 lies on segment p1q1 
+    if (o1 == 0 && line_onSegment(p1, p2, q1)) return 1; 
+  
+    // p1, q1 and p2 are colinear and q2 lies on segment p1q1 
+    if (o2 == 0 && line_onSegment(p1, q2, q1)) return 1; 
+  
+    // p2, q2 and p1 are colinear and p1 lies on segment p2q2 
+    if (o3 == 0 && line_onSegment(p2, p1, q2)) return 1; 
+  
+     // p2, q2 and q1 are colinear and q1 lies on segment p2q2 
+    if (o4 == 0 && line_onSegment(p2, q1, q2)) return 1; 
+  
+    return 0; // Doesn't fall in any of the above cases 
+} 
 // Returns true if the point p lies inside the polygon[] with n vertices 
 /*int isInside(const Polygon* polygon, int n, const Point *p) 
 { 
@@ -331,7 +373,7 @@ static Intersection line_computeIntersection_v3(Edge_Ptr *edge, Edge_Ptr *query_
      //   pt3->x > pt2->x || pt3->y > pt2->y)
      //   return intersection_point;
 
-    int inter = line_doIntersect(pt1, pt2, pt3, pt4);
+    int inter = line_doIntersectv2(pt1, pt2, pt3, pt4);
     if (!inter) return intersection_point;
 
     int pt3_orig = line_orientation_v3(pt1, pt2, pt3);
@@ -344,7 +386,6 @@ static Intersection line_computeIntersection_v3(Edge_Ptr *edge, Edge_Ptr *query_
         intersection_point.edges[1] = query_edge;
         return intersection_point;
     }
-
 
     float x1y2_y1x2 = pt1->x * pt2->y - pt1->y * pt2->x;
     float x3_x4 = pt3->x - pt4->x;
@@ -370,6 +411,18 @@ static Intersection line_computeIntersection_v3(Edge_Ptr *edge, Edge_Ptr *query_
     denom;
 
     return intersection_point;
+}
+
+// To solve example6_2
+static int line_isIntersectUnique(const Intersection *inter, const Intersection_Point_List *list)
+{
+    for (int i = 0; i < list->size; ++i) {
+        if (inter->pt.x == list->pts[i].pt.x &&
+            inter->pt.y == list->pts[i].pt.y) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static Array2di arr_init2di(int w, int h)
@@ -464,7 +517,7 @@ static inline void poly_addPoint(Polygon* polygon, const Point *pt)
 {
     assert(polygon->size < MAX_POINTS);
     polygon->pts[polygon->size++] = *pt;
-    printf("poly size:%d [%.2f, %2f]\n", polygon->size, pt->x, pt->y);
+    clip_info_l("poly size:%d [%.2f, %2f]\n", polygon->size, pt->x, pt->y);
 }
 
 static int poly_checkType(Polygon* polygon)
@@ -529,7 +582,6 @@ static void edge_sortIntersection(Edge_Ptr *edge)
             i = 3;
         }
     }
-    printf("sort:slope:%.2f type=%d\n", slope, i);
     qsort(edge->intersection_point, edge->size, sizeof(Intersection**),compare_func);
 }
 
@@ -629,7 +681,7 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
         for (int s = 0; s < subj->size; ++s) {
             Edge_Ptr *subj_edge = &subj_edges->edges[s];
             Intersection intersection_point = line_computeIntersection_v3(subj_edge, clip_edge);
-            if (intersection_point.type != VERT_UNDERTERMINED) {
+            if (intersection_point.type != VERT_UNDERTERMINED) {// && line_isIntersectUnique(&intersection_point, &intersection_list)) {
                 intersection = &intersection_list.pts[intersection_list.size++];
                 *intersection = intersection_point;
                 edge_pushBackIntersection(subj_edge, intersection);
@@ -640,6 +692,7 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
             clip_info_l("C:%d,%p,[%2.f,%2.f][%2.f,%2.f] - S:%d,%p,[%2.f,%2.f][%2.f,%2.f] Inter:(%d)(%p)[%2.2f-%2.2f] L:%p,R:%p\n",
                 c,clip_edge,clip_edge->prev->x,clip_edge->prev->y,
                 clip_edge->curr->x,clip_edge->curr->y,
+
                 s,subj_edge,subj_edge->prev->x,subj_edge->prev->y,
                 subj_edge->curr->x,subj_edge->curr->y,
                 intersection_point.type,intersection,intersection_point.pt.x,intersection_point.pt.y,
@@ -728,27 +781,38 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
         curr->type = VERT_CHECKED;
         edge = intersection->edges[1];
         int jump = 1;
+        int same = 0;
+        Point *curr_pt = NULL;
         do {
+            // we can first get the pointer of pt and intersection if any
             clip_info_l("edge size %d.jump:%d\n", edge->size, jump);
             int i = -1;
             if (edge->size == 1) {
                if (!jump) {
                     curr = edge->intersection_point[0];
-                    poly_addPoint(poly, &curr->pt);
+                    same = curr->type == VERT_SAME;
+                    curr_pt = &curr->pt;
+                    if (curr!=orig) poly_addPoint(poly, &curr->pt);
                     edge = (curr->edges[0] == edge) ?
                         curr->edges[1] :
                         curr->edges[0];
                     curr->type = VERT_CHECKED;
                     jump = 1;
                 } else {
-                    poly_addPoint(poly, edge->curr);
+                    if (!same)
+                        poly_addPoint(poly, edge->curr);
+                    //curr_pt = edge->curr;
+                    same = 0;
                     edge = edge->next;
                     curr = NULL;
                     jump = 0;
                 }
         //   2 if edge size == 0
             } else if (edge->size == 0) { // ?
-                poly_addPoint(poly, edge->curr);
+                if (!same)
+                    poly_addPoint(poly, edge->curr);
+                same=0;
+                //curr_pt = edge->curr;
                 edge = edge->next;
                 curr = NULL;
                 jump = 0;
@@ -760,7 +824,11 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
                             break;
                     }
                     if (i == (edge->size-1)) {
-                        poly_addPoint(poly, edge->curr);
+                        if (!same) {
+                            poly_addPoint(poly, edge->curr);
+                        }
+                        //curr_pt = edge->curr;
+                        same=0;
                         curr = NULL;
                         edge = edge->next;
                         jump = 0;
@@ -769,31 +837,37 @@ static Clipper_result clip_genericPolygon(const Polygon *in_subj, const Polygon 
                         curr = edge->intersection_point[i];
                         if (curr == orig)
                             break;
-                        poly_addPoint(poly, &curr->pt);
+                        //curr_pt = &curr->pt;
+                        if (curr!=orig) poly_addPoint(poly, &curr->pt);
                         edge = (curr->edges[0] == edge) ?
                             curr->edges[1] :
                             curr->edges[0];
+                        same = curr->type == VERT_SAME;
                         curr->type = VERT_CHECKED;
                         jump = 1;
                     } else {
                         assert(0);
                     }
                 } else {
-                    poly_addPoint(poly, &edge->intersection_point[0]->pt);
                     curr = edge->intersection_point[0];
-                    edge = (edge->intersection_point[0]->edges[0] == edge) ?
-                            edge->intersection_point[0]->edges[1]:
-                            edge->intersection_point[0]->edges[0];
+                    if (curr!=orig) poly_addPoint(poly, &curr->pt);
+                    edge = (curr->edges[0] == edge) ?
+                            curr->edges[1]:
+                            curr->edges[0];
+                    same = curr->type == VERT_SAME;
                     curr->type = VERT_CHECKED;
                     jump = 1;
                 }
             }
-            clip_info_l("edge size %d.jump:%d,i:%d\n", edge->size, jump, i);
-        } while (curr != orig);
+            clip_info_l("poly size:%d (%p,%p) edge size %d.jump:%d,i:%d\n", poly->size, curr, orig, edge->size, jump, i);
+        }  while (curr != orig);
         // if curr point is origin intersection
         //   turn all marked intersection complete
         // for next vert in 
         //   go back to while loop 
+
+    //for (int i = 0; i < result.size; ++i) {
+    //    poly_removeConsecutiveDuplicate(result.polygon[i]);
     }
     free(vert_in_index);
     return result;
@@ -860,11 +934,11 @@ static Clipper_result clip_convexPolygon(const Polygon *in_subj, const Polygon *
 
 Clipper_result CLIP_clipPolygon(const Polygon *subj, const Polygon *clipper)
 {
-    if (subj->type == CONVEX) {
+    if (subj->type == clipper->type && subj->type == CONVEX ) {
         return clip_convexPolygon(subj, clipper);
-    } else if (subj->type == CONCAVE) {
+    } else if (subj->type == CONCAVE || clipper->type == CONCAVE) {
         return clip_genericPolygon(subj, clipper);
-    } else if (subj->type == UNDETERMINED) {
+    } else if (subj->type == UNDETERMINED || clipper->type == UNDETERMINED) {
         clip_warn("polygon is not determined yet!");
         return clip_genericPolygon(subj, clipper);
     } else {
@@ -1234,8 +1308,44 @@ void example5(char **argv)
     arr_free(arr);
 }
 
+
+void example6_lambda(const Polygon *in_subj, const Polygon *in_clipper)
+{
+    Polygon subj = *in_subj;
+    Polygon clipper = *in_clipper;
+
+    subj.type = poly_checkType(&subj);
+    clipper.type = poly_checkType(&clipper);
+    Array2di arr = arr_init2di(60,30);
+    CLIP_drawPoly(&subj, &arr, 'S');
+    CLIP_drawPoly(&clipper, &arr, 'C');
+    CLIP_printArr(&arr);
+    arr_free(arr);
+
+    Clipper_result result = CLIP_clipPolygon(&subj, &clipper);
+    clip_log("subj: %s vs clipper: %s\n",
+        poly_type_str[subj.type],
+        poly_type_str[clipper.type]);
+    for (int j = 0; j < result.size; ++j) { 
+        Polygon *poly = &result.polygon[j];
+        for (int i = 0; i < poly->size; ++i) {
+            clip_log("res:%d (%d: %.4f %.4f)\n", j, i, poly->pts[i].x,
+                poly->pts[i].y);
+        }
+        clip_log("output area is %.2f\n",CLIP_getArea(poly));
+    }
+    arr = arr_init2di(60,30);
+    for (int j = 0; j < result.size; ++j) { 
+        Polygon *poly = &result.polygon[j];
+        CLIP_drawPoly(poly, &arr, j+1);
+    }
+    CLIP_printArr(&arr);
+    arr_free(arr);   
+}
+
 void example6(char **argv)
 {
+   clip_log("Example6_1===================\n");
    Polygon subj = {.size=6,
         .pts = {
             {10, 15},
@@ -1254,33 +1364,43 @@ void example6(char **argv)
             {10, 2},
             {20, 2},
         }};
-    subj.type = poly_checkType(&subj);
-    clipper.type = poly_checkType(&clipper);
-    Array2di arr = arr_init2di(60,30);
-    CLIP_drawPoly(&subj, &arr, 'S');
-    CLIP_drawPoly(&clipper, &arr, 'C');
-    CLIP_printArr(&arr);
-    arr_free(arr);
-
-    Clipper_result result = CLIP_clipPolygon(&subj, &clipper);
-    clip_log("subj: %s vs clipper: %s\n",
-        poly_type_str[subj.type],
-        poly_type_str[clipper.type]);
-    for (int j = 0; j < result.size; ++j) { 
-        Polygon *poly = &result.polygon[j];
-        for (int i = 0; i < poly->size; ++i) {
-            clip_log("res:%d (%d: %.2f %.2f)\n", j, i, poly->pts[i].x,
-                poly->pts[i].y);
-        }
-        clip_log("output area is %.2f\n",CLIP_getArea(poly));
-    }
-    arr = arr_init2di(60,30);
-    for (int j = 0; j < result.size; ++j) { 
-        Polygon *poly = &result.polygon[j];
-        CLIP_drawPoly(poly, &arr, j+1);
-    }
-    CLIP_printArr(&arr);
-    arr_free(arr);
+    example6_lambda(&subj, &clipper);
+    clip_log("Example6_2===================\n");
+    subj = (Polygon){.size=4,
+        .pts = {
+            {15, 5},
+            {40, 5},
+            {40, 15},
+            {15, 15}
+        }};
+    clipper = (Polygon){.size=6,
+        .pts = {
+            {40, 15},
+            {20, 28},
+            {10, 28},
+            {30, 15},
+            {10, 2},
+            {20, 2},
+        }};
+    example6_lambda(&subj, &clipper);
+    clip_log("Example6_3===================\n");
+    subj = (Polygon){.size=4,
+        .pts = {
+            {15, 5},
+            {40, 5},
+            {40, 15},
+            {15, 15}
+        }};
+    clipper = (Polygon){.size=6,
+        .pts = {
+            {40, 15},
+            {20, 28},
+            {10, 28},
+            {30, 15},
+            {10, 2},
+            {20, 2},
+        }};
+    example6_lambda(&subj, &clipper);
 }
 
 const char *helper_str = {
